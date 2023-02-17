@@ -21,102 +21,114 @@ import json
 import ifcopenshell
 import ifcopenshell.util.schema
 
+def generate_ifc4_entity_map():
+    filepath = "IFC4.exp"
+    schema4 = ifcopenshell.ifcopenshell_wrapper.schema_by_name("IFC4")
 
-filepath = "IFC4.exp"
-schema2x3 = ifcopenshell.ifcopenshell_wrapper.schema_by_name("IFC2X3")
-schema4 = ifcopenshell.ifcopenshell_wrapper.schema_by_name("IFC4")
+    entity_to_type_map = {}
 
-entity_to_type_map = {}
+    entity = None
+    is_in_where_rule = False
 
-entity = None
-is_in_where_rule = False
-
-with open(filepath) as fp:
-    line = fp.readline()
-    while line:
-        if "ENTITY " in line:
-            entity = line[len("ENTITY ") : -1]
-        elif "END_ENTITY" in line:
-            is_in_where_rule = False
-        elif entity and ("CorrectTypeAssigned" in line or "CorrectStyleAssigned" in line):
-            is_in_where_rule = True
-        elif entity and is_in_where_rule and "IN TYPEOF" in line and "RelatingType" in line:
-            type_class = line.split("'")[1].split(".")[1]
-            if type_class == "IFCTRANFORMERTYPE":
-                # Fix typo in schema
-                type_class = "IFCTRANSFORMERTYPE"
-            type_class = schema4.declaration_by_name(type_class).name()
-            entity_to_type_map.setdefault(entity, []).append(type_class)
+    with open(filepath) as fp:
         line = fp.readline()
+        while line:
+            if "ENTITY " in line:
+                entity = line[len("ENTITY ") : -1]
+            elif "END_ENTITY" in line:
+                is_in_where_rule = False
+            elif entity and ("CorrectTypeAssigned" in line or "CorrectStyleAssigned" in line):
+                is_in_where_rule = True
+            elif entity and is_in_where_rule and "IN TYPEOF" in line and "RelatingType" in line:
+                type_class = line.split("'")[1].split(".")[1]
+                if type_class == "IFCTRANFORMERTYPE":
+                    # Fix typo in schema
+                    type_class = "IFCTRANSFORMERTYPE"
+                type_class = schema4.declaration_by_name(type_class).name()
+                entity_to_type_map.setdefault(entity, []).append(type_class)
+            line = fp.readline()
 
-# This type of hacky express parsing doesn't accommodate subtypes, so...
+    # some manual IFC4 corrections (more details in entity_to_type_map_4.json commits history)
+    ifc4_corrections = {
+        'IfcDoor': ['IfcDoorStyle'], # also will apply change to IfcDoorStandardCase
+        'IfcWindow': ['IfcWindowStyle'], # also will aply change to IfcWindowStandardCase
+        'IfcCivilElement': ['IfcCivilElementType'],
+    }
+    for entity in ifc4_corrections:
+        for ifc_type in ifc4_corrections[entity]:
+            entity_to_type_map.setdefault(entity, []).append(ifc_type)
+
+    # This type of hacky express parsing doesn't accommodate subtypes, so...
+    def get_inherited_map(declaration):
+        if not ifcopenshell.util.schema.is_a(declaration, "IfcObject"):
+            return
+        if declaration.supertype().name() in entity_to_type_map:
+            return entity_to_type_map[declaration.supertype().name()]
+        return get_inherited_map(declaration.supertype())
+
+    for declaration in schema4.declarations():
+        if not hasattr(declaration, "supertype"):
+            continue
+        if not ifcopenshell.util.schema.is_a(declaration, "IfcObject"):
+            continue
+        if declaration.is_abstract():
+            continue
+        if declaration.name() in entity_to_type_map:
+            continue
+        inherited_map = get_inherited_map(declaration)
+        if inherited_map:
+            entity_to_type_map[declaration.name()] = inherited_map
 
 
-def get_inherited_map(declaration):
-    if not ifcopenshell.util.schema.is_a(declaration, "IfcObject"):
-        return
-    if declaration.supertype().name() in entity_to_type_map:
-        return entity_to_type_map[declaration.supertype().name()]
-    return get_inherited_map(declaration.supertype())
 
-
-for declaration in schema4.declarations():
-    if not hasattr(declaration, "supertype"):
-        continue
-    if not ifcopenshell.util.schema.is_a(declaration, "IfcObject"):
-        continue
-    if declaration.is_abstract():
-        continue
-    if declaration.name() in entity_to_type_map:
-        continue
-    inherited_map = get_inherited_map(declaration)
-    if inherited_map:
-        entity_to_type_map[declaration.name()] = inherited_map
-
-type_to_entity_map = {value: [key] for key in entity_to_type_map for value in entity_to_type_map[key]}
+    type_to_entity_map = {value: [key] for key in entity_to_type_map for value in entity_to_type_map[key]}
+    return entity_to_type_map
 
 # IFC2X3 doesn't seem to define this in EXPRESS, so let's just guess
+# TODO: do we need some other way to validate 2x3?
+def generate_ifc2x3_entity_map():
+    entity_to_type_map2x3 = {}
+    schema2x3 = ifcopenshell.ifcopenshell_wrapper.schema_by_name("IFC2X3")
 
-entity_to_type_map2x3 = {}
+    def guess_type_declaration(declaration):
+        if not ifcopenshell.util.schema.is_a(declaration, "IfcObject"):
+            return
 
+        try:
+            type_declaration = schema2x3.declaration_by_name(declaration.name() + "Type")
+            return type_declaration
+        except:
+            pass
 
-def guess_type_declaration(declaration):
-    if not ifcopenshell.util.schema.is_a(declaration, "IfcObject"):
-        return
+        try:
+            type_declaration = schema2x3.declaration_by_name(declaration.name() + "Style")
+            return type_declaration
+        except:
+            pass
 
-    try:
-        type_declaration = schema2x3.declaration_by_name(declaration.name() + "Type")
-        return type_declaration
-    except:
-        pass
+        return guess_type_declaration(declaration.supertype())
 
-    try:
-        type_declaration = schema2x3.declaration_by_name(declaration.name() + "Style")
-        return type_declaration
-    except:
-        pass
+    for declaration in schema2x3.declarations():
+        if not hasattr(declaration, "supertype"):
+            continue
+        type_declaration = guess_type_declaration(declaration)
+        if not type_declaration:
+            continue
+        if not type_declaration.is_abstract():
+            entity_to_type_map2x3.setdefault(declaration.name(), []).append(type_declaration.name())
+        for subtype in type_declaration.subtypes():
+            if not subtype.is_abstract():
+                entity_to_type_map2x3.setdefault(declaration.name(), []).append(subtype.name())
 
-    return guess_type_declaration(declaration.supertype())
+    type_to_entity_map2x3 = {value: [key] for key in entity_to_type_map2x3 for value in entity_to_type_map2x3[key]}
 
+    return entity_to_type_map2x3
 
-for declaration in schema2x3.declarations():
-    if not hasattr(declaration, "supertype"):
-        continue
-    type_declaration = guess_type_declaration(declaration)
-    if not type_declaration:
-        continue
-    if not type_declaration.is_abstract():
-        entity_to_type_map2x3.setdefault(declaration.name(), []).append(type_declaration.name())
-    for subtype in type_declaration.subtypes():
-        if not subtype.is_abstract():
-            entity_to_type_map2x3.setdefault(declaration.name(), []).append(subtype.name())
-
-type_to_entity_map2x3 = {value: [key] for key in entity_to_type_map2x3 for value in entity_to_type_map2x3[key]}
-
+entity_to_type_map4 = generate_ifc4_entity_map()
+entity_to_type_map2x3 = generate_ifc2x3_entity_map()
 
 with open("entity_to_type_map_4.json", "w") as f:
-    json.dump(entity_to_type_map, f, indent=4)
-
+    json.dump(entity_to_type_map4, f, indent=4)
 
 with open("entity_to_type_map_2x3.json", "w") as f:
     json.dump(entity_to_type_map2x3, f, indent=4)
