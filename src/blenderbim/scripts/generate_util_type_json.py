@@ -1,5 +1,5 @@
 # BlenderBIM Add-on - OpenBIM Blender Add-on
-# Copyright (C) 2020, 2021 Dion Moult <dion@thinkmoult.com>
+# Copyright (C) 2020, 2021, 2023 Dion Moult <dion@thinkmoult.com>, @Andrej730
 #
 # This file is part of BlenderBIM Add-on.
 #
@@ -21,9 +21,10 @@ import json
 import ifcopenshell
 import ifcopenshell.util.schema
 
-def generate_ifc4_entity_map():
-    filepath = "IFC4.exp"
-    schema4 = ifcopenshell.ifcopenshell_wrapper.schema_by_name("IFC4")
+
+def generate_ifc4_entity_map(filepath, schema_name, manual_corrections={}):
+    filepath = filepath
+    schema = ifcopenshell.ifcopenshell_wrapper.schema_by_name(schema_name)
 
     entity_to_type_map = {}
 
@@ -44,18 +45,12 @@ def generate_ifc4_entity_map():
                 if type_class == "IFCTRANFORMERTYPE":
                     # Fix typo in schema
                     type_class = "IFCTRANSFORMERTYPE"
-                type_class = schema4.declaration_by_name(type_class).name()
+                type_class = schema.declaration_by_name(type_class).name()
                 entity_to_type_map.setdefault(entity, []).append(type_class)
             line = fp.readline()
 
-    # some manual IFC4 corrections (more details in entity_to_type_map_4.json commits history)
-    ifc4_corrections = {
-        'IfcDoor': ['IfcDoorStyle'], # also will apply change to IfcDoorStandardCase
-        'IfcWindow': ['IfcWindowStyle'], # also will aply change to IfcWindowStandardCase
-        'IfcCivilElement': ['IfcCivilElementType'],
-    }
-    for entity in ifc4_corrections:
-        for ifc_type in ifc4_corrections[entity]:
+    for entity in manual_corrections:
+        for ifc_type in manual_corrections[entity]:
             entity_to_type_map.setdefault(entity, []).append(ifc_type)
 
     # This type of hacky express parsing doesn't accommodate subtypes, so...
@@ -66,7 +61,7 @@ def generate_ifc4_entity_map():
             return entity_to_type_map[declaration.supertype().name()]
         return get_inherited_map(declaration.supertype())
 
-    for declaration in schema4.declarations():
+    for declaration in schema.declarations():
         if not hasattr(declaration, "supertype"):
             continue
         if not ifcopenshell.util.schema.is_a(declaration, "IfcObject"):
@@ -79,15 +74,19 @@ def generate_ifc4_entity_map():
         if inherited_map:
             entity_to_type_map[declaration.name()] = inherited_map
 
-
-
     type_to_entity_map = {value: [key] for key in entity_to_type_map for value in entity_to_type_map[key]}
+
+    schema_version = schema_name.lower().strip("ifc")
+    with open(f"src/ifcopenshell-python/ifcopenshell/util/entity_to_type_map_{schema_version}.json", "w") as f:
+        json.dump(entity_to_type_map, f, indent=4)
+
     return entity_to_type_map
 
+
 # IFC2X3 doesn't seem to define this in EXPRESS, so let's just guess
-# TODO: do we need some other way to validate 2x3?
+# TODO: do we need some other way to validate 2x3 mapping?
 def generate_ifc2x3_entity_map():
-    entity_to_type_map2x3 = {}
+    entity_to_type_map = {}
     schema2x3 = ifcopenshell.ifcopenshell_wrapper.schema_by_name("IFC2X3")
 
     def guess_type_declaration(declaration):
@@ -115,20 +114,38 @@ def generate_ifc2x3_entity_map():
         if not type_declaration:
             continue
         if not type_declaration.is_abstract():
-            entity_to_type_map2x3.setdefault(declaration.name(), []).append(type_declaration.name())
+            entity_to_type_map.setdefault(declaration.name(), []).append(type_declaration.name())
         for subtype in type_declaration.subtypes():
             if not subtype.is_abstract():
-                entity_to_type_map2x3.setdefault(declaration.name(), []).append(subtype.name())
+                entity_to_type_map.setdefault(declaration.name(), []).append(subtype.name())
 
-    type_to_entity_map2x3 = {value: [key] for key in entity_to_type_map2x3 for value in entity_to_type_map2x3[key]}
+    type_to_entity_map2x3 = {value: [key] for key in entity_to_type_map for value in entity_to_type_map[key]}
 
-    return entity_to_type_map2x3
+    with open("src/ifcopenshell-python/ifcopenshell/util/entity_to_type_map_2x3.json", "w") as f:
+        json.dump(entity_to_type_map, f, indent=4)
 
-entity_to_type_map4 = generate_ifc4_entity_map()
+    return entity_to_type_map
+
+
+# specs: https://technical.buildingsmart.org/standards/ifc/ifc-schema-specifications
+# ifc4x3 - https://github.com/buildingSMART/IFC4.3-html/releases/tag/sep-13-release (inside .zip)
+# ifc4   - https://standards.buildingsmart.org/IFC/RELEASE/IFC4/FINAL/EXPRESS/IFC4.exp
+
+# IfcCivilElement correction could be removed in the future releases of IFC
+# if https://github.com/buildingSMART/IFC4.3.x-development/issues/583 is solved
+
+ifc4x3_corrections = {
+    "IfcCivilElement": ["IfcCivilElementType"],
+}
+entity_to_type_map4x3 = generate_ifc4_entity_map("IFC4X3_TC1.exp", "ifc4x3", ifc4x3_corrections)
+
+# some manual IFC4 corrections (more details in entity_to_type_map_4.json commits history)
+ifc4_corrections = {
+    "IfcDoor": ["IfcDoorStyle"],  # also will apply change to IfcDoorStandardCase
+    "IfcWindow": ["IfcWindowStyle"],  # also will aply change to IfcWindowStandardCase
+    "IfcCivilElement": ["IfcCivilElementType"],
+}
+#
+entity_to_type_map4 = generate_ifc4_entity_map("IFC4.exp", "ifc4", ifc4_corrections)
+
 entity_to_type_map2x3 = generate_ifc2x3_entity_map()
-
-with open("entity_to_type_map_4.json", "w") as f:
-    json.dump(entity_to_type_map4, f, indent=4)
-
-with open("entity_to_type_map_2x3.json", "w") as f:
-    json.dump(entity_to_type_map2x3, f, indent=4)

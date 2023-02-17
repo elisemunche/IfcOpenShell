@@ -20,6 +20,9 @@
     "IfcBeam": [
         "IfcBeamType"
     ],
+    "IfcBearing": [
+        "IfcBearingType"
+    ],
     "IfcBoiler": [
         "IfcBoilerType"
     ],
@@ -43,6 +46,9 @@
     ],
     "IfcCableSegment": [
         "IfcCableSegmentType"
+    ],
+    "IfcCaissonFoundation": [
+        "IfcCaissonFoundationType"
     ],
     "IfcChiller": [
         "IfcChillerType"
@@ -68,11 +74,17 @@
     "IfcController": [
         "IfcControllerType"
     ],
+    "IfcConveyorSegment": [
+        "IfcConveyorSegmentType"
+    ],
     "IfcCooledBeam": [
         "IfcCooledBeamType"
     ],
     "IfcCoolingTower": [
         "IfcCoolingTowerType"
+    ],
+    "IfcCourse": [
+        "IfcCourseType"
     ],
     "IfcCovering": [
         "IfcCoveringType"
@@ -83,15 +95,20 @@
     "IfcDamper": [
         "IfcDamperType"
     ],
+    "IfcDeepFoundation": [
+        "IfcDeepFoundationType"
+    ],
     "IfcDiscreteAccessory": [
         "IfcDiscreteAccessoryType"
+    ],
+    "IfcDistributionBoard": [
+        "IfcDistributionBoardType"
     ],
     "IfcDistributionChamberElement": [
         "IfcDistributionChamberElementType"
     ],
     "IfcDoor": [
-        "IfcDoorType",
-        "IfcDoorStyle"
+        "IfcDoorType"
     ],
     "IfcDuctFitting": [
         "IfcDuctFittingType"
@@ -110,6 +127,9 @@
     ],
     "IfcElectricFlowStorageDevice": [
         "IfcElectricFlowStorageDeviceType"
+    ],
+    "IfcElectricFlowTreatmentDevice": [
+        "IfcElectricFlowTreatmentDeviceType"
     ],
     "IfcElectricGenerator": [
         "IfcElectricGeneratorType"
@@ -165,17 +185,26 @@
     "IfcHumidifier": [
         "IfcHumidifierType"
     ],
+    "IfcImpactProtectionDevice": [
+        "IfcImpactProtectionDeviceType"
+    ],
     "IfcInterceptor": [
         "IfcInterceptorType"
     ],
     "IfcJunctionBox": [
         "IfcJunctionBoxType"
     ],
+    "IfcKerb": [
+        "IfcKerbType"
+    ],
     "IfcLamp": [
         "IfcLampType"
     ],
     "IfcLightFixture": [
         "IfcLightFixtureType"
+    ],
+    "IfcLiquidTerminal": [
+        "IfcLiquidTerminalType"
     ],
     "IfcMechanicalFastener": [
         "IfcMechanicalFastenerType"
@@ -186,11 +215,23 @@
     "IfcMember": [
         "IfcMemberType"
     ],
+    "IfcMobileTelecommunicationsAppliance": [
+        "IfcMobileTelecommunicationsApplianceType"
+    ],
+    "IfcMooringDevice": [
+        "IfcMooringDeviceType"
+    ],
     "IfcMotorConnection": [
         "IfcMotorConnectionType"
     ],
+    "IfcNavigationElement": [
+        "IfcNavigationElementType"
+    ],
     "IfcOutlet": [
         "IfcOutletType"
+    ],
+    "IfcPavement": [
+        "IfcPavementType"
     ],
     "IfcPile": [
         "IfcPileType"
@@ -212,6 +253,9 @@
     ],
     "IfcPump": [
         "IfcPumpType"
+    ],
+    "IfcRail": [
+        "IfcRailType"
     ],
     "IfcRailing": [
         "IfcRailingType"
@@ -239,6 +283,12 @@
     ],
     "IfcShadingDevice": [
         "IfcShadingDeviceType"
+    ],
+    "IfcSign": [
+        "IfcSignType"
+    ],
+    "IfcSignal": [
+        "IfcSignalType"
     ],
     "IfcSlab": [
         "IfcSlabType"
@@ -279,6 +329,12 @@
     "IfcTendonAnchor": [
         "IfcTendonAnchorType"
     ],
+    "IfcTendonConduit": [
+        "IfcTendonConduitType"
+    ],
+    "IfcTrackElement": [
+        "IfcTrackElementType"
+    ],
     "IfcTransformer": [
         "IfcTransformerType"
     ],
@@ -297,6 +353,12 @@
     "IfcValve": [
         "IfcValveType"
     ],
+    "IfcVehicle": [
+        "IfcVehicleType"
+    ],
+    "IfcVibrationDamper": [
+        "IfcVibrationDamperType"
+    ],
     "IfcVibrationIsolator": [
         "IfcVibrationIsolatorType"
     ],
@@ -307,42 +369,12 @@
         "IfcWasteTerminalType"
     ],
     "IfcWindow": [
-        "IfcWindowType",
-        "IfcWindowStyle"
+        "IfcWindowType"
     ],
     "IfcCivilElement": [
         "IfcCivilElementType"
     ],
-    "IfcBeamStandardCase": [
-        "IfcBeamType"
-    ],
-    "IfcColumnStandardCase": [
-        "IfcColumnType"
-    ],
-    "IfcDoorStandardCase": [
-        "IfcDoorType",
-        "IfcDoorStyle"
-    ],
-    "IfcMemberStandardCase": [
-        "IfcMemberType"
-    ],
-    "IfcPlateStandardCase": [
-        "IfcPlateType"
-    ],
-    "IfcSlabElementedCase": [
-        "IfcSlabType"
-    ],
-    "IfcSlabStandardCase": [
-        "IfcSlabType"
-    ],
-    "IfcWallElementedCase": [
-        "IfcWallType"
-    ],
     "IfcWallStandardCase": [
         "IfcWallType"
-    ],
-    "IfcWindowStandardCase": [
-        "IfcWindowType",
-        "IfcWindowStyle"
     ]
 }
