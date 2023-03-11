@@ -39,13 +39,26 @@ import shapely
 # https://ifc43-docs.standards.buildingsmart.org/IFC/RELEASE/IFC4x3/HTML/lexical/IfcRoofType.htm
 
 
+# TODO: move to tools or somewhere else
+class Blender_preserve_editor_mode:
+    def __init__(self):
+        self.current_mode = bpy.context.object.mode
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, type, value, traceback):
+        bpy.ops.object.mode_set(mode = self.current_mode)
+
+# TODO: add operator helper if possible?
+# TODO: move to generate_gable_roof
 class GenerateHippedRoof(bpy.types.Operator, tool.Ifc.Operator):
     bl_idname = "bim.generate_hipped_roof"
     bl_label = "Generate Hipped Roof"
     bl_options = {"REGISTER"}
     mode: bpy.props.StringProperty(default="ANGLE")
     height: bpy.props.FloatProperty(default=1)
-    angle: bpy.props.FloatProperty(default=10)
+    angle: bpy.props.FloatProperty(default=45) # TODO: RAD
 
     def _execute(self, context):
         obj = bpy.context.active_object
@@ -53,8 +66,16 @@ class GenerateHippedRoof(bpy.types.Operator, tool.Ifc.Operator):
             self.report({"ERROR"}, "Need to select some object first.")
             return {"CANCELLED"}
 
-        bpy.ops.mesh.dissolve_limited()
-        generate_hipped_roof(obj, self.mode, self.height, self.angle)
+        # TODO: restore dissolve limited
+        # with Blender_preserve_editor_mode():
+        #     # TODO: preserve vertices selection
+        #     # make sure it works in edit mode also
+        #     obj.data.vertices.foreach_set("select", [True] * len(obj.data.vertices))
+        #     bpy.ops.object.mode_set(mode="EDIT")
+        #     bpy.ops.mesh.dissolve_limited()
+
+        # TODO: remove after debug
+        generate_gable_roof(obj, self.mode, self.height, self.angle)
         return {"FINISHED"}
 
 
@@ -68,17 +89,14 @@ def generate_hipped_roof(obj, mode="ANGLE", height=1.0, angle=10):
 
     unioned_boundaries = shapely.union_all(shapely.GeometryCollection(boundary_lines))
     closed_polygons = shapely.polygonize(unioned_boundaries.geoms)
+    
+    # find the polygon with the biggest area
+    roof_polygon = max(closed_polygons.geoms, key=lambda polygon: polygon.area)
 
-    roof_polygon = None
-    biggest_area = 0
-    for polygon in closed_polygons.geoms:
-        area = polygon.area
-        if area > biggest_area:
-            roof_polygon = polygon
-            biggest_area = area
-
+    # add z coordinate if not present
     roof_polygon = shapely.force_3d(roof_polygon)
 
+    # make sure the polygon is counter-clockwise
     if not shapely.is_ccw(roof_polygon):
         roof_polygon = roof_polygon.reverse()
 
@@ -88,7 +106,7 @@ def generate_hipped_roof(obj, mode="ANGLE", height=1.0, angle=10):
     total_exterior_verts = len(verts)
     next_index = total_exterior_verts
 
-    inner_loops = None
+    inner_loops = None # in case when there is no .interiors
     for interior in roof_polygon.interiors:
         if inner_loops is None:
             inner_loops = []
@@ -125,6 +143,140 @@ def generate_hipped_roof(obj, mode="ANGLE", height=1.0, angle=10):
     extruded_verts = bm_sort_out_geom(extrusion_geom)["verts"]
     bmesh.ops.translate(bm, vec=[0.0, 0.0, 0.1], verts=extruded_verts)
 
+    tool.Blender.apply_bmesh(obj.data, bm)
+
+def generate_gable_roof(obj, mode="ANGLE", height=1.0, angle=10):
+    boundary_lines = []
+
+    original_geometry_data = dict()
+    original_geometry_data['edges'] = [set(e.vertices[:]) for e in obj.data.edges]
+    original_geometry_data['verts'] = [v.co.copy() for v in obj.data.vertices]
+    original_geometry_data['crease_values'] = [e.crease for e in obj.data.edges]
+
+    # assume all vertices are on the same level
+    roof_z_level = obj.data.vertices[0].co.z
+
+    for edge in obj.data.edges:
+        boundary_lines.append(
+            shapely.LineString([obj.data.vertices[edge.vertices[0]].co, obj.data.vertices[edge.vertices[1]].co])
+        )
+
+    unioned_boundaries = shapely.union_all(shapely.GeometryCollection(boundary_lines))
+    closed_polygons = shapely.polygonize(unioned_boundaries.geoms)
+    
+    # find the polygon with the biggest area
+    roof_polygon = max(closed_polygons.geoms, key=lambda polygon: polygon.area)
+
+    # add z coordinate if not present
+    roof_polygon = shapely.force_3d(roof_polygon)
+    print(roof_polygon)
+
+    # make sure the polygon is counter-clockwise
+    if not shapely.is_ccw(roof_polygon):
+        roof_polygon = roof_polygon.reverse()
+
+    # Define vertices for the base footprint of the building at height 0.0
+    # counterclockwise order
+    verts = [Vector(v) for v in roof_polygon.exterior.coords[0:-1]]
+    total_exterior_verts = len(verts)
+    next_index = total_exterior_verts
+
+    inner_loops = None # in case when there is no .interiors
+    for interior in roof_polygon.interiors:
+        if inner_loops is None:
+            inner_loops = []
+        loop = interior.coords[0:-1]
+        total_verts = len(loop)
+        verts.extend([Vector(v) for v in loop])
+        inner_loops.append((next_index, total_verts))
+        next_index += total_verts
+
+    unit_vectors = None  # we have no unit vectors, let them computed by polygonize()
+    start_exterior_index = 0
+
+    faces = []
+
+    if mode == "HEIGHT":
+        height = height
+        angle = 0.0
+    else:
+        angle = tan(radians(round(angle, 4)))
+        height = 0.0
+
+    faces = bpypolyskel.polygonize(
+        verts, start_exterior_index, total_exterior_verts, inner_loops, height, angle, faces, unit_vectors
+    )
+
+    edges = []
+
+    bm = tool.Blender.get_bmesh_for_mesh(obj.data, clean=True)
+    new_verts = [bm.verts.new(v) for v in verts]
+    new_edges = [bm.edges.new([new_verts[vi] for vi in edge]) for edge in edges]
+    new_faces = [bm.faces.new([new_verts[vi] for vi in face]) for face in faces]
+
+    # TODO: uncomment after debug
+    # TODO: and match base_edges with extruded ones...
+
+    # extrusion_geom = bmesh.ops.extrude_face_region(bm, geom=bm.faces)["geom"]
+    # extruded_verts = bm_sort_out_geom(extrusion_geom)["verts"]
+    # bmesh.ops.translate(bm, vec=[0.0, 0.0, 0.1], verts=extruded_verts)
+
+    tool.Blender.apply_bmesh(obj.data, bm)
+
+    # trying to match edges from new mesh
+    # with the original meshes
+    # to figure their crease values
+    edges_match = {}
+    # need to make sure edges are actually at z = 0
+    base_edges = []
+    verts_to_change = {}
+
+    # TODO: match edges
+    def find_close_original_vert(co):
+        for vi, old_co in enumerate(original_geometry_data['verts']):
+            if (co - old_co).length <= 0.0001:
+                return vi
+
+    for edge in obj.data.edges:
+        edge_verts = [obj.data.vertices[vi].co for vi in edge.vertices]
+        if all( abs(v.z - roof_z_level) <= 0.0001 for v in edge_verts):
+            base_edges.append(edge)
+
+    for edge in base_edges:
+        print('base edge', edge, edge.vertices[:]) # TODO: remove after debug
+        edge_verts = [obj.data.vertices[vi].co for vi in edge.vertices]
+
+        # finding appropriate vert from the original geometry
+        old_verts_notation = set(find_close_original_vert(v) for v in edge_verts)
+
+        if old_verts_notation not in original_geometry_data['edges']:
+            continue
+
+        # if found edge match
+        # then figuring it's crease value
+        old_edge_index = original_geometry_data['edges'].index(old_verts_notation)
+        old_edge_crease_value = original_geometry_data["crease_values"][old_edge_index]
+        edges_match[edge] = old_edge_crease_value
+
+        # TODO: remove after debug
+        print(f"Found a match: {edge.vertices[:]}, {original_geometry_data['edges'].index(old_verts_notation)}, {original_geometry_data['crease_values'][old_edge_index]}")
+
+        # if edge crease_value is non zero, then we move it's vertex
+        if old_edge_crease_value != 0:
+            # find the faces if it's part of
+            for polygon in obj.data.polygons:
+                polygon_verts = polygon.vertices[:]
+                if all(vi in polygon_verts for vi in edge.vertices):
+                    break
+            other_vert_i = next(vi for vi in polygon.vertices if vi not in edge.vertices[:])
+            other_vert = obj.data.vertices[other_vert_i]
+            # basically move related vertex to the center of the edge with crease
+            verts_to_change[other_vert.index] = (edge_verts[0] + edge_verts[1])/2 * Vector([1,1,0]) + Vector([0,0, other_vert.co.z])
+
+    bm = tool.Blender.get_bmesh_for_mesh(obj.data)
+    bm.verts.ensure_lookup_table()
+    for vi in verts_to_change:
+        bm.verts[vi].co = verts_to_change[vi]
     tool.Blender.apply_bmesh(obj.data, bm)
 
 
