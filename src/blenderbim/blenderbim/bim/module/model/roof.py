@@ -33,6 +33,7 @@ from math import tan, radians
 from mathutils import Vector, Matrix
 from bpypolyskel import bpypolyskel
 import shapely
+from pprint import pprint
 
 # reference:
 # https://ifc43-docs.standards.buildingsmart.org/IFC/RELEASE/IFC4x3/HTML/lexical/IfcRoof.htm
@@ -44,7 +45,7 @@ import shapely
 class GenerateHippedRoof(bpy.types.Operator, tool.Ifc.Operator):
     bl_idname = "bim.generate_hipped_roof"
     bl_label = "Generate Hipped Roof"
-    bl_options = {"REGISTER"}
+    bl_options = {"REGISTER", "UNDO"}
     mode: bpy.props.StringProperty(default="ANGLE")
     height: bpy.props.FloatProperty(default=1)
     angle: bpy.props.FloatProperty(default=45) # TODO: RAD
@@ -156,7 +157,7 @@ def generate_gable_roof(obj, mode="ANGLE", height=1.0, angle=10):
 
     # add z coordinate if not present
     roof_polygon = shapely.force_3d(roof_polygon)
-    print(roof_polygon)
+    print(roof_polygon) # TODO: RAD
 
     # make sure the polygon is counter-clockwise
     if not shapely.is_ccw(roof_polygon):
@@ -223,6 +224,9 @@ def generate_gable_roof(obj, mode="ANGLE", height=1.0, angle=10):
         for vi, old_co in enumerate(original_geometry_data['verts']):
             if (co - old_co).length <= 0.0001:
                 return vi
+            
+    # TODO: match the opposite - take only edges with crease values
+    # and try to match them to new ones
 
     for edge in obj.data.edges:
         edge_verts = [obj.data.vertices[vi].co for vi in edge.vertices]
@@ -250,6 +254,7 @@ def generate_gable_roof(obj, mode="ANGLE", height=1.0, angle=10):
 
         # if edge crease_value is non zero, then we move it's vertex
         if old_edge_crease_value != 0:
+            old_edge_crease_value = abs(old_edge_crease_value)
             # find the faces if it's part of
             for polygon in obj.data.polygons:
                 polygon_verts = polygon.vertices[:]
@@ -257,12 +262,30 @@ def generate_gable_roof(obj, mode="ANGLE", height=1.0, angle=10):
                     break
             other_vert_i = next(vi for vi in polygon.vertices if vi not in edge.vertices[:])
             other_vert = obj.data.vertices[other_vert_i]
-            # basically move related vertex to the center of the edge with crease
-            verts_to_change[other_vert.index] = (edge_verts[0] + edge_verts[1])/2 * Vector([1,1,0]) + Vector([0,0, other_vert.co.z])
+            import pdb; pdb.set_trace()
+            # TODO: math...
+
+            def transform_top_vert(top_vert_co, edge_verts):
+                A, B = [v.xy for v in edge_verts]
+                O = top_vert_co.copy()
+                AB = B - A
+                AB_dir = AB.normalized()
+                AO = O.xy - A
+                edge_space = Matrix( [AB_dir, AB_dir.yx * Vector([-1, 1])] ).transposed()
+                AO_local = edge_space @ AO
+                AO_local.y = AO_local.y * (1-old_edge_crease_value)
+                AO = edge_space.inverted() @ AO_local
+                transformed_co = (AO + A).to_3d() + Vector([0, 0, O.z])
+                return transformed_co
+            
+            top_vert_co = verts_to_change.get(other_vert_i, other_vert.co)
+            verts_to_change[other_vert_i] = transform_top_vert(top_vert_co, edge_verts)
+            print(f'plan to move vertex {other_vert_i}, {other_vert.co}')
 
     bm = tool.Blender.get_bmesh_for_mesh(obj.data)
     bm.verts.ensure_lookup_table()
     for vi in verts_to_change:
+        print(f'moving vertex {vi}, {bm.verts[vi].co}')
         bm.verts[vi].co = verts_to_change[vi]
     tool.Blender.apply_bmesh(obj.data, bm)
 
