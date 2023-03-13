@@ -58,9 +58,7 @@ class GenerateHippedRoof(bpy.types.Operator, tool.Ifc.Operator):
 
         bm = tool.Blender.get_bmesh_for_mesh(obj.data)
         # argument values are the defaults for `bpy.ops.mesh.dissolve_limited`
-        bmesh.ops.dissolve_limit(
-            bm, angle_limit=0.0872665, use_dissolve_boundaries=False, delimit={"NORMAL"}, edges=bm.edges[:]
-        )
+        bmesh.ops.dissolve_limit(bm, angle_limit=0.0872665, use_dissolve_boundaries=False, delimit={"NORMAL"}, edges=bm.edges[:], verts=bm.verts[:])
         tool.Blender.apply_bmesh(obj.data, bm)
 
         generate_gable_roof(obj, self.mode, self.height, self.angle)
@@ -262,8 +260,6 @@ def generate_gable_roof(obj, mode="ANGLE", height=1.0, angle=10):
                     break
             other_vert_i = next(vi for vi in polygon.vertices if vi not in edge.vertices[:])
             other_vert = obj.data.vertices[other_vert_i]
-            import pdb; pdb.set_trace()
-            # TODO: math...
 
             def transform_top_vert(top_vert_co, edge_verts):
                 A, B = [v.xy for v in edge_verts]
@@ -340,7 +336,7 @@ def update_roof_modifier_bmesh(context):
     # apply dissolve limit seems to get more correct results with `generate_hipped_roof`
     # argument values are the defaults for `bpy.ops.mesh.dissolve_limited`
     bmesh.ops.dissolve_limit(
-        bm, angle_limit=0.0872665, use_dissolve_boundaries=False, delimit={"NORMAL"}, verts=bm.edges[:]
+        bm, angle_limit=0.0872665, use_dissolve_boundaries=False, delimit={"NORMAL"}, edges=bm.edges[:], verts=bm.verts[:]
     )
     tool.Blender.apply_bmesh(obj.data, bm)
 
