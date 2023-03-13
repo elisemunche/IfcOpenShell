@@ -39,17 +39,6 @@ import shapely
 # https://ifc43-docs.standards.buildingsmart.org/IFC/RELEASE/IFC4x3/HTML/lexical/IfcRoofType.htm
 
 
-# TODO: move to tools or somewhere else
-class Blender_preserve_editor_mode:
-    def __init__(self):
-        self.current_mode = bpy.context.object.mode
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, type, value, traceback):
-        bpy.ops.object.mode_set(mode = self.current_mode)
-
 # TODO: add operator helper if possible?
 # TODO: move to generate_gable_roof
 class GenerateHippedRoof(bpy.types.Operator, tool.Ifc.Operator):
@@ -66,15 +55,13 @@ class GenerateHippedRoof(bpy.types.Operator, tool.Ifc.Operator):
             self.report({"ERROR"}, "Need to select some object first.")
             return {"CANCELLED"}
 
-        # TODO: restore dissolve limited
-        # with Blender_preserve_editor_mode():
-        #     # TODO: preserve vertices selection
-        #     # make sure it works in edit mode also
-        #     obj.data.vertices.foreach_set("select", [True] * len(obj.data.vertices))
-        #     bpy.ops.object.mode_set(mode="EDIT")
-        #     bpy.ops.mesh.dissolve_limited()
+        bm = tool.Blender.get_bmesh_for_mesh(obj.data)
+        # argument values are the defaults for `bpy.ops.mesh.dissolve_limited`
+        bmesh.ops.dissolve_limit(
+            bm, angle_limit=0.0872665, use_dissolve_boundaries=False, delimit={"NORMAL"}, edges=bm.edges[:]
+        )
+        tool.Blender.apply_bmesh(obj.data, bm)
 
-        # TODO: remove after debug
         generate_gable_roof(obj, self.mode, self.height, self.angle)
         return {"FINISHED"}
 
@@ -330,7 +317,7 @@ def update_roof_modifier_bmesh(context):
     # apply dissolve limit seems to get more correct results with `generate_hipped_roof`
     # argument values are the defaults for `bpy.ops.mesh.dissolve_limited`
     bmesh.ops.dissolve_limit(
-        bm, angle_limit=0.0872665, use_dissolve_boundaries=False, delimit={"NORMAL"}, verts=bm.verts[:]
+        bm, angle_limit=0.0872665, use_dissolve_boundaries=False, delimit={"NORMAL"}, verts=bm.edges[:]
     )
     tool.Blender.apply_bmesh(obj.data, bm)
 
