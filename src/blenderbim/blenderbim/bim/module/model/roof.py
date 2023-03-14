@@ -34,6 +34,7 @@ from mathutils import Vector, Matrix
 from bpypolyskel import bpypolyskel
 import shapely
 from pprint import pprint
+from itertools import chain
 
 # reference:
 # https://ifc43-docs.standards.buildingsmart.org/IFC/RELEASE/IFC4x3/HTML/lexical/IfcRoof.htm
@@ -41,6 +42,9 @@ from pprint import pprint
 
 
 # create read only property in blender operator
+
+def float_is_zero(f):
+    return 0.0001 >= f >= - 0.0001
 
 # TODO: move to generate_gable_roof
 class GenerateHippedRoof(bpy.types.Operator, tool.Ifc.Operator):
@@ -69,6 +73,7 @@ class GenerateHippedRoof(bpy.types.Operator, tool.Ifc.Operator):
         bm = tool.Blender.get_bmesh_for_mesh(obj.data)
         # argument values are the defaults for `bpy.ops.mesh.dissolve_limited`
         bmesh.ops.dissolve_limit(bm, angle_limit=0.0872665, use_dissolve_boundaries=False, delimit={"NORMAL"}, edges=bm.edges[:], verts=bm.verts[:])
+        bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=0.0001)
         tool.Blender.apply_bmesh(obj.data, bm)
 
         generated_roof_angle = generate_gable_roof(obj, self.mode, self.height, self.angle)
@@ -143,20 +148,51 @@ def generate_hipped_roof(obj, mode="ANGLE", height=1.0, angle=10):
     tool.Blender.apply_bmesh(obj.data, bm)
 
 def generate_gable_roof(obj, mode="ANGLE", height=1.0, angle=10):
+    debug_z_distance = 1.0
     boundary_lines = []
 
+    bm = tool.Blender.get_bmesh_for_mesh(obj.data)
+
+    # identifying footprint verts by min_z
+    footprint_verts = []
+    footprint_min_z = 0
+    for v in bm.verts:
+        if float_is_zero(v.co.z - footprint_min_z):
+            footprint_verts.append(v)
+
+        elif footprint_min_z > v.co.z:
+            footprint_min_z = v.co.z
+            footprint_verts = [v]
+
+        # ignore vertices above min_z
+    
+    # python bmesh recalculate vertices index after removing some
+
+    # TODO: possibly if we plan to remove all unnecessary geometry
+    # then all edges are footprint edges
+    footprint_edges = list(set(chain(*[v.link_edges for v in footprint_verts])))
+
+    for v in bm.verts:
+        if v not in footprint_verts:
+            bm.verts.remove(v)
+
     original_geometry_data = dict()
-    original_geometry_data['edges'] = [set(e.vertices[:]) for e in obj.data.edges]
-    original_geometry_data['verts'] = [v.co.copy() for v in obj.data.vertices]
-    original_geometry_data['crease_values'] = [e.crease for e in obj.data.edges]
+    # saving edges as sets to compare later
+    crease_level = bm.edges.layers.crease.verify()
+    original_geometry_data['edges'] = [set(bm_get_indices(e.verts)) for e in footprint_edges]
+    original_geometry_data['verts'] = {v.index:v.co.copy() for v in footprint_verts}
+    original_geometry_data['crease_values'] = [e[crease_level] for e in footprint_edges]
+
+    print(len(footprint_verts))
+    print("original_geometry_data['edges']", original_geometry_data['edges'])
 
     # assume all vertices are on the same level
-    roof_z_level = obj.data.vertices[0].co.z
 
-    for edge in obj.data.edges:
+    for edge in footprint_edges:
         boundary_lines.append(
-            shapely.LineString([obj.data.vertices[edge.vertices[0]].co, obj.data.vertices[edge.vertices[1]].co])
+            shapely.LineString([v.co for v in edge.verts])
         )
+    tool.Blender.apply_bmesh(obj.data, bm)
 
     unioned_boundaries = shapely.union_all(shapely.GeometryCollection(boundary_lines))
     closed_polygons = shapely.polygonize(unioned_boundaries.geoms)
@@ -166,7 +202,6 @@ def generate_gable_roof(obj, mode="ANGLE", height=1.0, angle=10):
 
     # add z coordinate if not present
     roof_polygon = shapely.force_3d(roof_polygon)
-    print(roof_polygon) # TODO: RAD
 
     # make sure the polygon is counter-clockwise
     if not shapely.is_ccw(roof_polygon):
@@ -205,17 +240,14 @@ def generate_gable_roof(obj, mode="ANGLE", height=1.0, angle=10):
     )
 
     edges = []
-
-    bm = tool.Blender.get_bmesh_for_mesh(obj.data, clean=True)
+    verts = [v + Vector((0.0, 0.0, debug_z_distance)) for v in verts]
+    bm = tool.Blender.get_bmesh_for_mesh(obj.data)
     new_verts = [bm.verts.new(v) for v in verts]
     new_edges = [bm.edges.new([new_verts[vi] for vi in edge]) for edge in edges]
-    assert all(len(set(face)) == len(face) for face in faces), faces
-    print(faces)
     new_faces = [bm.faces.new([new_verts[vi] for vi in face]) for face in faces]
 
     # TODO: uncomment after debug
     # TODO: and match base_edges with extruded ones...
-
     # extrusion_geom = bmesh.ops.extrude_face_region(bm, geom=bm.faces)["geom"]
     # extruded_verts = bm_sort_out_geom(extrusion_geom)["verts"]
     # bmesh.ops.translate(bm, vec=[0.0, 0.0, 0.1], verts=extruded_verts)
@@ -227,31 +259,32 @@ def generate_gable_roof(obj, mode="ANGLE", height=1.0, angle=10):
     # to figure their crease values
     edges_match = {}
     # need to make sure edges are actually at z = 0
-    base_edges = []
+    footprint_edges = []
     verts_to_change = {}
 
     # TODO: match edges
-    def find_close_original_vert(co):
-        for vi, old_co in enumerate(original_geometry_data['verts']):
-            if (co - old_co).length <= 0.0001:
-                return vi
-            
     # TODO: match the opposite - take only edges with crease values
     # and try to match them to new ones
 
+    def find_close_original_vert(co):
+        for vi in original_geometry_data['verts']:
+            old_co = original_geometry_data['verts'][vi]
+            if float_is_zero( (co - Vector([0,0,debug_z_distance]) - old_co).length):
+                return vi
+            
     for edge in obj.data.edges:
         edge_verts = [obj.data.vertices[vi].co for vi in edge.vertices]
-        if all( abs(v.z - roof_z_level) <= 0.0001 for v in edge_verts):
-            base_edges.append(edge)
+        if all( float_is_zero(v.z - debug_z_distance - footprint_min_z) for v in edge_verts):
+            footprint_edges.append(edge)
 
     # TODO: refactor with bmesh
-    def find_other_polygon_vert_i(edge):
+    def find_other_polygon_verts_i(edge):
         for polygon in obj.data.polygons:
             polygon_verts = polygon.vertices[:]
             if all(vi in polygon_verts for vi in edge.vertices):
                 break
-        other_vert_i = next(vi for vi in polygon.vertices if vi not in edge.vertices[:])
-        return other_vert_i
+        other_verts_i = [vi for vi in polygon.vertices if vi not in edge.vertices[:]]
+        return other_verts_i
 
     def angle_between(A, B, P):
         """angle between AB and CP where C is P projected on AB"""
@@ -280,19 +313,23 @@ def generate_gable_roof(obj, mode="ANGLE", height=1.0, angle=10):
 
     # find an angle between the first of the edge and its related vert
     # since all angle is the same across the all edges
-    angle_calculation_edge = base_edges[0]
+    # TODO: change angle with average angle because it could be different across the roof
+    angle_calculation_edge = footprint_edges[0]
     angle_calculation_edge_vertices = [obj.data.vertices[vi].co for vi in angle_calculation_edge.vertices]
-    other_vert_i = find_other_polygon_vert_i(base_edges[0])
+    other_vert_i = find_other_polygon_verts_i(footprint_edges[0])[0]
     other_vert_co = obj.data.vertices[other_vert_i].co
     calculated_angle = angle_between(*angle_calculation_edge_vertices, other_vert_co)
 
-    for edge in base_edges:
+    print('original geometry data', original_geometry_data['edges'])
+    for edge in footprint_edges:
         print('base edge', edge, edge.vertices[:]) # TODO: remove after debug
         edge_verts = [obj.data.vertices[vi].co for vi in edge.vertices]
 
         # finding appropriate vert from the original geometry
         old_verts_notation = set(find_close_original_vert(v) for v in edge_verts)
-
+        
+        # TODO: remove after debug
+        print('old verts notation', old_verts_notation)
         if old_verts_notation not in original_geometry_data['edges']:
             continue
 
@@ -308,18 +345,18 @@ def generate_gable_roof(obj, mode="ANGLE", height=1.0, angle=10):
         # if edge crease_value is non zero, then we move it's vertex
         if old_edge_crease_value != 0:
             old_edge_crease_value = abs(old_edge_crease_value)
-            other_vert_i = find_other_polygon_vert_i(edge)
-            other_vert = obj.data.vertices[other_vert_i]
-
-            top_vert_co = verts_to_change.get(other_vert_i, other_vert.co)
-            verts_to_change[other_vert_i] = project_vert_on_edge_linearly(top_vert_co, edge_verts, old_edge_crease_value)
-            print(f'plan to move vertex {other_vert_i}, {other_vert.co}')
+            other_verts_i = find_other_polygon_verts_i(edge)
+            for other_vert_i in other_verts_i:
+                other_vert = obj.data.vertices[other_vert_i]
+                top_vert_co = verts_to_change.get(other_vert_i, other_vert.co)
+                verts_to_change[other_vert_i] = project_vert_on_edge_linearly(top_vert_co, edge_verts, old_edge_crease_value)
 
     bm = tool.Blender.get_bmesh_for_mesh(obj.data)
     bm.verts.ensure_lookup_table()
     for vi in verts_to_change:
         print(f'moving vertex {vi}, {bm.verts[vi].co}')
         bm.verts[vi].co = verts_to_change[vi]
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
     tool.Blender.apply_bmesh(obj.data, bm)
 
     return calculated_angle
