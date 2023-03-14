@@ -29,7 +29,7 @@ from blenderbim.bim.module.model.data import RoofData, refresh
 from blenderbim.bim.module.model.decorator import ProfileDecorator
 
 import json
-from math import tan, radians
+from math import tan, radians, degrees, atan
 from mathutils import Vector, Matrix
 from bpypolyskel import bpypolyskel
 import shapely
@@ -40,15 +40,25 @@ from pprint import pprint
 # https://ifc43-docs.standards.buildingsmart.org/IFC/RELEASE/IFC4x3/HTML/lexical/IfcRoofType.htm
 
 
-# TODO: add operator helper if possible?
+# create read only property in blender operator
+
 # TODO: move to generate_gable_roof
 class GenerateHippedRoof(bpy.types.Operator, tool.Ifc.Operator):
     bl_idname = "bim.generate_hipped_roof"
     bl_label = "Generate Hipped Roof"
     bl_options = {"REGISTER", "UNDO"}
-    mode: bpy.props.StringProperty(default="ANGLE")
+    
+    roof_generation_methods = (
+        ("HEIGHT", "HEIGHT", ""),
+        ("ANGLE", "ANGLE", ""),
+    )
+
+    mode: bpy.props.EnumProperty(
+        name="Roof Generation Method", items=roof_generation_methods, default="ANGLE"
+    )
     height: bpy.props.FloatProperty(default=1)
     angle: bpy.props.FloatProperty(default=45) # TODO: RAD
+    resulting_angle: bpy.props.FloatProperty(default=0)
 
     def _execute(self, context):
         obj = bpy.context.active_object
@@ -61,7 +71,8 @@ class GenerateHippedRoof(bpy.types.Operator, tool.Ifc.Operator):
         bmesh.ops.dissolve_limit(bm, angle_limit=0.0872665, use_dissolve_boundaries=False, delimit={"NORMAL"}, edges=bm.edges[:], verts=bm.verts[:])
         tool.Blender.apply_bmesh(obj.data, bm)
 
-        generate_gable_roof(obj, self.mode, self.height, self.angle)
+        generated_roof_angle = generate_gable_roof(obj, self.mode, self.height, self.angle)
+        self.resulting_angle = generated_roof_angle
         return {"FINISHED"}
 
 
@@ -198,6 +209,8 @@ def generate_gable_roof(obj, mode="ANGLE", height=1.0, angle=10):
     bm = tool.Blender.get_bmesh_for_mesh(obj.data, clean=True)
     new_verts = [bm.verts.new(v) for v in verts]
     new_edges = [bm.edges.new([new_verts[vi] for vi in edge]) for edge in edges]
+    assert all(len(set(face)) == len(face) for face in faces), faces
+    print(faces)
     new_faces = [bm.faces.new([new_verts[vi] for vi in face]) for face in faces]
 
     # TODO: uncomment after debug
@@ -231,6 +244,48 @@ def generate_gable_roof(obj, mode="ANGLE", height=1.0, angle=10):
         if all( abs(v.z - roof_z_level) <= 0.0001 for v in edge_verts):
             base_edges.append(edge)
 
+    # TODO: refactor with bmesh
+    def find_other_polygon_vert_i(edge):
+        for polygon in obj.data.polygons:
+            polygon_verts = polygon.vertices[:]
+            if all(vi in polygon_verts for vi in edge.vertices):
+                break
+        other_vert_i = next(vi for vi in polygon.vertices if vi not in edge.vertices[:])
+        return other_vert_i
+
+    def angle_between(A, B, P):
+        """angle between AB and CP where C is P projected on AB"""
+        AP = P - A
+        AB = B - A
+        AB_dir = AB.normalized()
+        proj_length = AP.dot(AB_dir)
+        C = A + AB_dir * proj_length
+        Pp = P * Vector([1, 1, 0]) + Vector([0, 0, C.z])
+        angle_tan = (P.z-C.z) / (Pp-C).length
+        return degrees(atan(angle_tan))
+
+    def project_vert_on_edge_linearly(projected_vert_co, edge_verts_coords, t):
+        """keeps the same z for `projected_vert_co`"""
+        A, B = [v.xy for v in edge_verts_coords]
+        O = projected_vert_co.copy()
+        AB = B - A
+        AB_dir = AB.normalized()
+        AO = O.xy - A
+        edge_space = Matrix( [AB_dir, AB_dir.yx * Vector([-1, 1])] ).transposed()
+        AO_local = edge_space @ AO
+        AO_local.y = AO_local.y * (1-t)
+        AO = edge_space.inverted() @ AO_local
+        transformed_co = (AO + A).to_3d() + Vector([0, 0, O.z])
+        return transformed_co
+
+    # find an angle between the first of the edge and its related vert
+    # since all angle is the same across the all edges
+    angle_calculation_edge = base_edges[0]
+    angle_calculation_edge_vertices = [obj.data.vertices[vi].co for vi in angle_calculation_edge.vertices]
+    other_vert_i = find_other_polygon_vert_i(base_edges[0])
+    other_vert_co = obj.data.vertices[other_vert_i].co
+    calculated_angle = angle_between(*angle_calculation_edge_vertices, other_vert_co)
+
     for edge in base_edges:
         print('base edge', edge, edge.vertices[:]) # TODO: remove after debug
         edge_verts = [obj.data.vertices[vi].co for vi in edge.vertices]
@@ -249,33 +304,15 @@ def generate_gable_roof(obj, mode="ANGLE", height=1.0, angle=10):
 
         # TODO: remove after debug
         print(f"Found a match: {edge.vertices[:]}, {original_geometry_data['edges'].index(old_verts_notation)}, {original_geometry_data['crease_values'][old_edge_index]}")
-
+        
         # if edge crease_value is non zero, then we move it's vertex
         if old_edge_crease_value != 0:
             old_edge_crease_value = abs(old_edge_crease_value)
-            # find the faces if it's part of
-            for polygon in obj.data.polygons:
-                polygon_verts = polygon.vertices[:]
-                if all(vi in polygon_verts for vi in edge.vertices):
-                    break
-            other_vert_i = next(vi for vi in polygon.vertices if vi not in edge.vertices[:])
+            other_vert_i = find_other_polygon_vert_i(edge)
             other_vert = obj.data.vertices[other_vert_i]
 
-            def transform_top_vert(top_vert_co, edge_verts):
-                A, B = [v.xy for v in edge_verts]
-                O = top_vert_co.copy()
-                AB = B - A
-                AB_dir = AB.normalized()
-                AO = O.xy - A
-                edge_space = Matrix( [AB_dir, AB_dir.yx * Vector([-1, 1])] ).transposed()
-                AO_local = edge_space @ AO
-                AO_local.y = AO_local.y * (1-old_edge_crease_value)
-                AO = edge_space.inverted() @ AO_local
-                transformed_co = (AO + A).to_3d() + Vector([0, 0, O.z])
-                return transformed_co
-            
             top_vert_co = verts_to_change.get(other_vert_i, other_vert.co)
-            verts_to_change[other_vert_i] = transform_top_vert(top_vert_co, edge_verts)
+            verts_to_change[other_vert_i] = project_vert_on_edge_linearly(top_vert_co, edge_verts, old_edge_crease_value)
             print(f'plan to move vertex {other_vert_i}, {other_vert.co}')
 
     bm = tool.Blender.get_bmesh_for_mesh(obj.data)
@@ -284,6 +321,8 @@ def generate_gable_roof(obj, mode="ANGLE", height=1.0, angle=10):
         print(f'moving vertex {vi}, {bm.verts[vi].co}')
         bm.verts[vi].co = verts_to_change[vi]
     tool.Blender.apply_bmesh(obj.data, bm)
+
+    return calculated_angle
 
 
 def bm_get_indices(sequence):
