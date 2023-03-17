@@ -76,7 +76,7 @@ class GenerateHippedRoof(bpy.types.Operator, tool.Ifc.Operator):
         bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=0.0001)
         tool.Blender.apply_bmesh(obj.data, bm)
 
-        generated_roof_angle = generate_gable_roof(obj, self.mode, self.height, self.angle)
+        generated_roof_angle = generate_gable_roof(obj, self.mode, self.height, self.angle, leave_footprint=True)
         self.resulting_angle = generated_roof_angle
         return {"FINISHED"}
 
@@ -147,8 +147,8 @@ def generate_hipped_roof(obj, mode="ANGLE", height=1.0, angle=10):
 
     tool.Blender.apply_bmesh(obj.data, bm)
 
-def generate_gable_roof(obj, mode="ANGLE", height=1.0, angle=10):
-    debug_z_distance = 1.0
+def generate_gable_roof(obj, mode="ANGLE", height=1.0, angle=10, leave_footprint=False):
+    debug_z_distance = 1.0 if leave_footprint else 0.0
     boundary_lines = []
 
     bm = tool.Blender.get_bmesh_for_mesh(obj.data)
@@ -192,6 +192,10 @@ def generate_gable_roof(obj, mode="ANGLE", height=1.0, angle=10):
         boundary_lines.append(
             shapely.LineString([v.co for v in edge.verts])
         )
+
+    if not leave_footprint:
+        bm.clear()
+
     tool.Blender.apply_bmesh(obj.data, bm)
 
     unioned_boundaries = shapely.union_all(shapely.GeometryCollection(boundary_lines))
