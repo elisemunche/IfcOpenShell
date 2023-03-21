@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-
+# my code modification
 # IfcPatch - IFC patching utiliy
 # Copyright (C) 2020, 2021, 2023 Dion Moult <dion@thinkmoult.com>
-#
+#git fetch
 # This file is part of IfcPatch.
 #
 # IfcPatch is free software: you can redistribute it and/or modify
